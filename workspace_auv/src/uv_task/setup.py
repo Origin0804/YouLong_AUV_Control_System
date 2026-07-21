@@ -12,8 +12,6 @@ setup(
         ('share/' + package_name + '/launch', ['launch/task_launch.py']),
         ('share/' + package_name + '/config', [
             'config/tasks.json',
-            'config/uv_tasks.json',
-            'config/uv_tasks_SAUVC2026.json',
         ]),
     ],
     install_requires=['setuptools'],

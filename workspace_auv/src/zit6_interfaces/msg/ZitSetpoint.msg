@@ -1,7 +1,0 @@
-uint8 control_key
-uint8 type_mask
-float32 x
-float32 y
-float32 z
-float32 yaw
-uint32 seq

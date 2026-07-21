@@ -19,7 +19,7 @@ from std_srvs.srv import Trigger
 
 from uv_msgs.action import BasicMotion
 from uv_msgs.msg import ObjectPositionArray, TaskStatus
-from uv_msgs.srv import RunTask
+from uv_msgs.srv import ExecTask, RunTask
 
 
 class TaskRunnerNode(Node):
@@ -43,6 +43,50 @@ class TaskRunnerNode(Node):
         self.stopped = False
         self._active_goal_handle = None
 
+        # Debug mode
+        self.declare_parameter('debug_mode', False)
+        self._debug_mode = self.get_parameter('debug_mode').get_parameter_value().bool_value
+        self._debug_task_name = None
+        self._debug_executing = False
+        self._debug_timeout = -1.0
+
+        # Task map (shared by _execute_task and _exec_task_cb)
+        self.task_map = {
+            'start': self._task_start,
+            'setx': self._task_setx,
+            'sety': self._task_sety,
+            'setz': self._task_setz,
+            'setrz': self._task_setrz,
+            'setxy': self._task_setxy,
+            'setxyz': self._task_setxyz,
+            'setxyzrz': self._task_setxyzrz,
+            'setxyrz': self._task_setxyrz,
+            'bmovex': self._task_bmovex,
+            'bmovey': self._task_bmovey,
+            'bmovez': self._task_bmovez,
+            'bmoverz': self._task_bmoverz,
+            'bmovexy': self._task_bmovexy,
+            'bmovexyz': self._task_bmovexyz,
+            'wmovex': self._task_wmovex,
+            'wmovey': self._task_wmovey,
+            'wmovez': self._task_wmovez,
+            'wmoverz': self._task_wmoverz,
+            'wmovexy': self._task_wmovexy,
+            'wmovexyz': self._task_wmovexyz,
+            'wtravelx': self._task_wtravelx,
+            'wtravely': self._task_wtravely,
+            'wtravelz': self._task_wtravelz,
+            'wtravelxy': self._task_wtravelxy,
+            'wtravelxyz': self._task_wtravelxyz,
+            'btravelx': self._task_btravelx,
+            'btravely': self._task_btravely,
+            'btravelz': self._task_btravelz,
+            'btravelxy': self._task_btravelxy,
+            'btravelxyz': self._task_btravelxyz,
+            'navigate': self._task_navigate,
+            'wait': self._task_wait,
+        }
+
         # Action client
         self._action_client = ActionClient(self, BasicMotion, 'basic_motion')
         if not self._action_client.wait_for_server(timeout_sec=5.0):
@@ -58,11 +102,13 @@ class TaskRunnerNode(Node):
         # Services
         self.create_service(RunTask, '/task/run', self._run_task_cb)
         self.create_service(Trigger, '/task/stop', self._stop_task_cb)
+        self.create_service(ExecTask, '/task/exec', self._exec_task_cb)
 
         # Status timer
         self.create_timer(0.5, self._publish_status)
 
         self.get_logger().info('TaskRunner node started')
+        self.get_logger().info(f'Debug mode: {self._debug_mode}')
 
     def _objects_cb(self, msg: ObjectPositionArray):
         self.objects = msg
@@ -125,43 +171,7 @@ class TaskRunnerNode(Node):
 
     def _execute_task(self, name: str, params: dict) -> bool:
         """Execute a single task by name."""
-        task_map = {
-            'start': self._task_start,
-            'setx': self._task_setx,
-            'sety': self._task_sety,
-            'setz': self._task_setz,
-            'setrz': self._task_setrz,
-            'setxy': self._task_setxy,
-            'setxyz': self._task_setxyz,
-            'setxyzrz': self._task_setxyzrz,
-            'setxyrz': self._task_setxyrz,
-            'bmovex': self._task_bmovex,
-            'bmovey': self._task_bmovey,
-            'bmovez': self._task_bmovez,
-            'bmoverz': self._task_bmoverz,
-            'bmovexy': self._task_bmovexy,
-            'bmovexyz': self._task_bmovexyz,
-            'wmovex': self._task_wmovex,
-            'wmovey': self._task_wmovey,
-            'wmovez': self._task_wmovez,
-            'wmoverz': self._task_wmoverz,
-            'wmovexy': self._task_wmovexy,
-            'wmovexyz': self._task_wmovexyz,
-            'wtravelx': self._task_wtravelx,
-            'wtravely': self._task_wtravely,
-            'wtravelz': self._task_wtravelz,
-            'wtravelxy': self._task_wtravelxy,
-            'wtravelxyz': self._task_wtravelxyz,
-            'btravelx': self._task_btravelx,
-            'btravely': self._task_btravely,
-            'btravelz': self._task_btravelz,
-            'btravelxy': self._task_btravelxy,
-            'btravelxyz': self._task_btravelxyz,
-            'navigate': self._task_navigate,
-            'wait': self._task_wait,
-        }
-
-        handler = task_map.get(name)
+        handler = self.task_map.get(name)
         if handler is None:
             self.get_logger().warn(f'Unknown task: {name}')
             return False
@@ -189,9 +199,15 @@ class TaskRunnerNode(Node):
         """
         type_names = {1: 'WMOVE', 2: 'BMOVE', 3: 'SET', 4: 'WTRAVEL', 5: 'BTRAVEL', 6: 'START'}
         type_name = type_names.get(cmd_type, f'UNKNOWN({cmd_type})')
+
+        # Debug mode timeout override
+        effective_timeout = timeout
+        if self._debug_timeout > 0:
+            effective_timeout = self._debug_timeout
+
         t = [f'{v:.2f}' for v in target]
         self.get_logger().info(
-            f'Send goal: {type_name} target=[{", ".join(t)}] timeout={timeout:.0f}s')
+            f'Send goal: {type_name} target=[{", ".join(t)}] timeout={effective_timeout:.0f}s')
 
         if not self._action_client.wait_for_server(timeout_sec=2.0):
             self.get_logger().error('Action server not available')
@@ -201,7 +217,7 @@ class TaskRunnerNode(Node):
         goal.cmd_type = cmd_type
         goal.axes = axes
         goal.target = target
-        goal.timeout = float(timeout)
+        goal.timeout = float(effective_timeout)
 
         send_future = self._action_client.send_goal_async(goal)
         while rclpy.ok() and not self.stopped and not send_future.done():
@@ -396,109 +412,116 @@ class TaskRunnerNode(Node):
             self._cmd_z += p['dz']
         return success
 
-    # --- WMOVE tasks (world frame stepping) ---
+    # --- WMOVE tasks (世界系步进：参数为绝对世界坐标，内部计算偏移) ---
 
     def _task_wmovex(self, p: dict) -> bool:
+        dx = p['x'] - self._cmd_x
         success, msg = self._send_action_goal(
-            BasicMotion.Goal.WMOVE, [p['dx'], 0.0, 0.0, 0.0], "x")
+            BasicMotion.Goal.WMOVE, [dx, 0.0, 0.0, 0.0], "x")
         self.get_logger().info(f'wmovex: {msg}')
         if success:
-            self._cmd_x += p['dx']
+            self._cmd_x = p['x']
         return success
 
     def _task_wmovey(self, p: dict) -> bool:
+        dy = p['y'] - self._cmd_y
         success, msg = self._send_action_goal(
-            BasicMotion.Goal.WMOVE, [0.0, p['dy'], 0.0, 0.0], "y")
+            BasicMotion.Goal.WMOVE, [0.0, dy, 0.0, 0.0], "y")
         self.get_logger().info(f'wmovey: {msg}')
         if success:
-            self._cmd_y += p['dy']
+            self._cmd_y = p['y']
         return success
 
     def _task_wmovez(self, p: dict) -> bool:
+        dz = p['z'] - self._cmd_z
         success, msg = self._send_action_goal(
-            BasicMotion.Goal.WMOVE, [0.0, 0.0, p['dz'], 0.0], "z")
+            BasicMotion.Goal.WMOVE, [0.0, 0.0, dz, 0.0], "z")
         self.get_logger().info(f'wmovez: {msg}')
         if success:
-            self._cmd_z += p['dz']
+            self._cmd_z = p['z']
         return success
 
     def _task_wmoverz(self, p: dict) -> bool:
+        drz = p['rz'] - self._cmd_yaw
         success, msg = self._send_action_goal(
-            BasicMotion.Goal.WMOVE, [0.0, 0.0, 0.0, p['drz']], "rz")
+            BasicMotion.Goal.WMOVE, [0.0, 0.0, 0.0, drz], "rz")
         self.get_logger().info(f'wmoverz: {msg}')
         if success:
-            self._cmd_yaw += p['drz']
+            self._cmd_yaw = p['rz']
         return success
 
     def _task_wmovexy(self, p: dict) -> bool:
+        dx, dy = p['x'] - self._cmd_x, p['y'] - self._cmd_y
         success, msg = self._send_action_goal(
-            BasicMotion.Goal.WMOVE, [p['dx'], p['dy'], 0.0, 0.0], "xy")
+            BasicMotion.Goal.WMOVE, [dx, dy, 0.0, 0.0], "xy")
         self.get_logger().info(f'wmovexy: {msg}')
         if success:
-            self._cmd_x += p['dx']
-            self._cmd_y += p['dy']
+            self._cmd_x, self._cmd_y = p['x'], p['y']
         return success
 
     def _task_wmovexyz(self, p: dict) -> bool:
+        dx, dy, dz = p['x'] - self._cmd_x, p['y'] - self._cmd_y, p['z'] - self._cmd_z
         success, msg = self._send_action_goal(
-            BasicMotion.Goal.WMOVE, [p['dx'], p['dy'], p['dz'], 0.0], "xyz")
+            BasicMotion.Goal.WMOVE, [dx, dy, dz, 0.0], "xyz")
         self.get_logger().info(f'wmovexyz: {msg}')
         if success:
-            self._cmd_x += p['dx']
-            self._cmd_y += p['dy']
-            self._cmd_z += p['dz']
+            self._cmd_x, self._cmd_y, self._cmd_z = p['x'], p['y'], p['z']
         return success
 
-    # --- WTRAVEL tasks (world frame linear travel: turn + go straight) ---
+    # --- WTRAVEL tasks (世界系直线：参数为绝对世界坐标，内部计算偏移) ---
 
     def _task_wtravelx(self, p: dict) -> bool:
+        dx = p['x'] - self._cmd_x
         success, msg = self._send_action_goal(
-            BasicMotion.Goal.WTRAVEL, [p['dx'], 0.0, 0.0, 0.0])
+            BasicMotion.Goal.WTRAVEL, [dx, 0.0, 0.0, 0.0], "x")
         self.get_logger().info(f'wtravelx: {msg}')
         if success:
-            self._cmd_x += p['dx']
+            self._cmd_x = p['x']
         return success
 
     def _task_wtravely(self, p: dict) -> bool:
+        dy = p['y'] - self._cmd_y
         success, msg = self._send_action_goal(
-            BasicMotion.Goal.WTRAVEL, [0.0, p['dy'], 0.0, 0.0])
+            BasicMotion.Goal.WTRAVEL, [0.0, dy, 0.0, 0.0], "y")
         self.get_logger().info(f'wtravely: {msg}')
         if success:
-            self._cmd_y += p['dy']
+            self._cmd_y = p['y']
         return success
 
     def _task_wtravelz(self, p: dict) -> bool:
+        dz = p['z'] - self._cmd_z
         success, msg = self._send_action_goal(
-            BasicMotion.Goal.WTRAVEL, [0.0, 0.0, p['dz'], 0.0], "z")
+            BasicMotion.Goal.WTRAVEL, [0.0, 0.0, dz, 0.0], "z")
         self.get_logger().info(f'wtravelz: {msg}')
         if success:
-            self._cmd_z += p['dz']
+            self._cmd_z = p['z']
         return success
 
     def _task_wtravelxy(self, p: dict) -> bool:
+        dx, dy = p['x'] - self._cmd_x, p['y'] - self._cmd_y
         success, msg = self._send_action_goal(
-            BasicMotion.Goal.WTRAVEL, [p['dx'], p['dy'], 0.0, 0.0])
+            BasicMotion.Goal.WTRAVEL, [dx, dy, 0.0, 0.0], "xy")
         self.get_logger().info(f'wtravelxy: {msg}')
         if success:
-            self._cmd_x += p['dx']
-            self._cmd_y += p['dy']
+            self._cmd_x, self._cmd_y = p['x'], p['y']
         return success
 
     def _task_wtravelxyz(self, p: dict) -> bool:
+        dx = p['x'] - self._cmd_x
+        dy = p['y'] - self._cmd_y
+        dz = p['z'] - self._cmd_z
         success, msg = self._send_action_goal(
-            BasicMotion.Goal.WTRAVEL, [p['dx'], p['dy'], p['dz'], 0.0])
+            BasicMotion.Goal.WTRAVEL, [dx, dy, dz, 0.0], "xyz")
         self.get_logger().info(f'wtravelxyz: {msg}')
         if success:
-            self._cmd_x += p['dx']
-            self._cmd_y += p['dy']
-            self._cmd_z += p['dz']
+            self._cmd_x, self._cmd_y, self._cmd_z = p['x'], p['y'], p['z']
         return success
 
     # --- BTRAVEL tasks (body frame linear travel: body→world + turn + go) ---
 
     def _task_btravelx(self, p: dict) -> bool:
         success, msg = self._send_action_goal(
-            BasicMotion.Goal.BTRAVEL, [p['dx'], 0.0, 0.0, 0.0])
+            BasicMotion.Goal.BTRAVEL, [p['dx'], 0.0, 0.0, 0.0], "x")
         self.get_logger().info(f'btravelx: {msg}')
         if success:
             cy, sy = math.cos(math.radians(self._cmd_yaw)), math.sin(math.radians(self._cmd_yaw))
@@ -508,7 +531,7 @@ class TaskRunnerNode(Node):
 
     def _task_btravely(self, p: dict) -> bool:
         success, msg = self._send_action_goal(
-            BasicMotion.Goal.BTRAVEL, [0.0, p['dy'], 0.0, 0.0])
+            BasicMotion.Goal.BTRAVEL, [0.0, p['dy'], 0.0, 0.0], "y")
         self.get_logger().info(f'btravely: {msg}')
         if success:
             cy, sy = math.cos(math.radians(self._cmd_yaw)), math.sin(math.radians(self._cmd_yaw))
@@ -526,7 +549,7 @@ class TaskRunnerNode(Node):
 
     def _task_btravelxy(self, p: dict) -> bool:
         success, msg = self._send_action_goal(
-            BasicMotion.Goal.BTRAVEL, [p['dx'], p['dy'], 0.0, 0.0])
+            BasicMotion.Goal.BTRAVEL, [p['dx'], p['dy'], 0.0, 0.0], "xy")
         self.get_logger().info(f'btravelxy: {msg}')
         if success:
             cy, sy = math.cos(math.radians(self._cmd_yaw)), math.sin(math.radians(self._cmd_yaw))
@@ -536,7 +559,7 @@ class TaskRunnerNode(Node):
 
     def _task_btravelxyz(self, p: dict) -> bool:
         success, msg = self._send_action_goal(
-            BasicMotion.Goal.BTRAVEL, [p['dx'], p['dy'], p['dz'], 0.0])
+            BasicMotion.Goal.BTRAVEL, [p['dx'], p['dy'], p['dz'], 0.0], "xyz")
         self.get_logger().info(f'btravelxyz: {msg}')
         if success:
             cy, sy = math.cos(math.radians(self._cmd_yaw)), math.sin(math.radians(self._cmd_yaw))
@@ -607,24 +630,114 @@ class TaskRunnerNode(Node):
         response.message = 'Tasks stopped'
         return response
 
+    def _exec_task_cb(self, request, response):
+        """Handle /task/exec: execute a single task (debug mode only)."""
+        if not self._debug_mode:
+            response.success = False
+            response.message = 'ExecTask service only available in debug mode'
+            self.get_logger().warn('/task/exec called but debug_mode is off')
+            return response
+
+        if self._debug_executing:
+            response.success = False
+            response.message = (
+                f'Task "{self._debug_task_name}" is already running. '
+                'Wait for it or call /task/stop.'
+            )
+            self.get_logger().warn(f'Rejected concurrent /task/exec: {self._debug_task_name}')
+            return response
+
+        task_name = request.task_name
+        params_json = request.params_json
+        timeout = request.timeout
+
+        # Validate task_name against task_map
+        if task_name not in self.task_map:
+            response.success = False
+            valid = ', '.join(sorted(self.task_map.keys()))
+            response.message = f'Unknown task: {task_name}. Valid: {valid}'
+            return response
+
+        # Parse params JSON
+        try:
+            params = json.loads(params_json) if params_json.strip() else {}
+        except json.JSONDecodeError as e:
+            response.success = False
+            response.message = f'Invalid params JSON: {e}'
+            return response
+
+        # Store timeout for _send_action_goal override
+        params['_timeout'] = timeout
+
+        self.get_logger().info(
+            f'DEBUG EXEC: {task_name} params={params} timeout={timeout:.0f}s'
+        )
+
+        # Execute in daemon thread (same pattern as run_task_list)
+        thread = threading.Thread(
+            target=self._debug_exec_single, args=(task_name, params),
+            daemon=True
+        )
+        thread.start()
+
+        response.success = True
+        response.message = f'Executing task: {task_name}'
+        return response
+
+    def _debug_exec_single(self, name: str, params: dict):
+        """Run a single task in debug mode (runs in daemon thread)."""
+        self._debug_executing = True
+        self._debug_task_name = name
+        self.stopped = False
+        self.running = True
+
+        # Extract timeout override before calling execute
+        timeout = params.pop('_timeout', -1.0)
+        self._debug_timeout = float(timeout) if timeout > 0 else -1.0
+
+        try:
+            success = self._execute_task(name, params)
+            if success:
+                self.get_logger().info(f'DEBUG EXEC {name}: SUCCESS')
+            else:
+                self.get_logger().warn(f'DEBUG EXEC {name}: FAILED')
+        except Exception as e:
+            self.get_logger().error(f'DEBUG EXEC {name}: exception: {e}')
+        finally:
+            self._debug_executing = False
+            self._debug_task_name = None
+            self.running = False
+            self._debug_timeout = -1.0
+
     # ========================================================================
     # Status publishing
     # ========================================================================
 
     def _publish_status(self):
         msg = TaskStatus()
-        if self.running:
+
+        if self._debug_executing or (self._debug_mode and self.running):
+            # Debug mode: single task executing
             msg.status = TaskStatus.STATUS_RUNNING
+            msg.current_task_name = self._debug_task_name or 'unknown'
+            msg.total_tasks = 1
+            msg.current_task_index = 0
+            msg.error_message = '[DEBUG MODE]'
+        elif self.running:
+            # Normal mode: task list executing
+            msg.status = TaskStatus.STATUS_RUNNING
+            msg.current_task_index = self.current_index
+            msg.total_tasks = len(self.tasks)
+            if self.current_index < len(self.tasks):
+                msg.current_task_name = self.tasks[self.current_index].get('name', '')
+            msg.error_message = ''
         elif self.stopped:
             msg.status = TaskStatus.STATUS_PAUSED
         else:
             msg.status = TaskStatus.STATUS_IDLE
+            if self._debug_mode:
+                msg.error_message = '[DEBUG MODE: idle, waiting for /task/exec]'
 
-        msg.current_task_index = self.current_index
-        msg.total_tasks = len(self.tasks)
-        if self.current_index < len(self.tasks):
-            msg.current_task_name = self.tasks[self.current_index].get('name', '')
-        msg.error_message = ''
         self.pub_status.publish(msg)
 
 
@@ -632,16 +745,22 @@ def main(args=None):
     rclpy.init(args=args)
     node = TaskRunnerNode()
 
-    # Load default tasks and start immediately
-    default_path = os.path.join(
-        get_package_share_directory('uv_task'), 'config', 'tasks.json'
-    )
-    if os.path.exists(default_path):
-        node.tasks = node.load_tasks(default_path)
-        if node.tasks:
-            thread = threading.Thread(target=node.run_task_list, daemon=True)
-            thread.start()
-            node.get_logger().info(f'Auto-started task list ({len(node.tasks)} tasks)')
+    if not node._debug_mode:
+        # Normal mode: load default tasks and start immediately
+        default_path = os.path.join(
+            get_package_share_directory('uv_task'), 'config', 'tasks.json'
+        )
+        if os.path.exists(default_path):
+            node.tasks = node.load_tasks(default_path)
+            if node.tasks:
+                thread = threading.Thread(target=node.run_task_list, daemon=True)
+                thread.start()
+                node.get_logger().info(f'Auto-started task list ({len(node.tasks)} tasks)')
+    else:
+        node.get_logger().info(
+            'Debug mode active: auto-start skipped. '
+            'Use /task/exec service to run single tasks.'
+        )
 
     try:
         rclpy.spin(node)

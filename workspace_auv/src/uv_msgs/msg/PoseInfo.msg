@@ -11,6 +11,8 @@ float32 origin_yaw
 float32 robot_x
 float32 robot_y
 float32 robot_z
+float32 robot_roll    # Roll in degrees
+float32 robot_pitch   # Pitch in degrees
 float32 robot_yaw
 
 # current motion target in odom frame (degrees for yaw)

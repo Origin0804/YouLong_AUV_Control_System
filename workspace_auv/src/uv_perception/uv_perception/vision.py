@@ -48,6 +48,9 @@ class VisionNode(Node):
         self.declare_parameter('publish_images', False)
         self._publish_images = self.get_parameter('publish_images').get_parameter_value().bool_value
 
+        self.declare_parameter('publish_annotated', False)
+        self._publish_annotated = self.get_parameter('publish_annotated').get_parameter_value().bool_value
+
         self.declare_parameter('sim_mode', True)
         self._sim_mode = self.get_parameter('sim_mode').get_parameter_value().bool_value
 
@@ -65,7 +68,7 @@ class VisionNode(Node):
 
         self.bridge = None
         self._model = None
-        self._confidence = 0.5
+        self._confidence = 0.9
         self._model_loaded = False
         self._cv_bridge_ok = False
         self._front_cap = None
@@ -120,6 +123,12 @@ class VisionNode(Node):
             'front_right': self.create_publisher(Image, '/perception/image/front_right', 10),
             'down_left':   self.create_publisher(Image, '/perception/image/down_left', 10),
             'down_right':  self.create_publisher(Image, '/perception/image/down_right', 10),
+        }
+        self.pub_annotated = {
+            'front_left':  self.create_publisher(Image, '/perception/annotated/front_left', 10),
+            'front_right': self.create_publisher(Image, '/perception/annotated/front_right', 10),
+            'down_left':   self.create_publisher(Image, '/perception/annotated/down_left', 10),
+            'down_right':  self.create_publisher(Image, '/perception/annotated/down_right', 10),
         }
 
     def _init_undistort(self):
@@ -215,12 +224,30 @@ class VisionNode(Node):
         self.pub_det[left_name].publish(det_left)
         if self._publish_images:
             self.pub_img[left_name].publish(self.bridge.cv2_to_imgmsg(left_img, 'bgr8'))
+        if self._publish_annotated:
+            annotated = self._draw_boxes(left_img, det_left)
+            self.pub_annotated[left_name].publish(self.bridge.cv2_to_imgmsg(annotated, 'bgr8'))
 
         # Run detection on right half
         det_right = self._detect(msg.header, right_name, right_img)
         self.pub_det[right_name].publish(det_right)
         if self._publish_images:
             self.pub_img[right_name].publish(self.bridge.cv2_to_imgmsg(right_img, 'bgr8'))
+        if self._publish_annotated:
+            annotated = self._draw_boxes(right_img, det_right)
+            self.pub_annotated[right_name].publish(self.bridge.cv2_to_imgmsg(annotated, 'bgr8'))
+
+    def _draw_boxes(self, cv_img, det_array: DetectionArray):
+        """Draw YOLO detection boxes and labels on image."""
+        annotated = cv_img.copy()
+        for det in det_array.detections:
+            x1, y1 = int(det.bbox_x1), int(det.bbox_y1)
+            x2, y2 = int(det.bbox_x2), int(det.bbox_y2)
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            label = f'{det.class_id}:{det.confidence:.2f}'
+            cv2.putText(annotated, label, (x1, max(y1 - 5, 10)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+        return annotated
 
     def _detect(self, header, camera_name: str, cv_img) -> DetectionArray:
         """Run YOLO on a single image, return DetectionArray."""

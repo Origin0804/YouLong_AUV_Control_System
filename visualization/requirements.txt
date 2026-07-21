@@ -1,0 +1,4 @@
+PySide6>=6.0
+# ROS 2 依赖通过 colcon workspace 提供：
+# rclpy, uv_msgs, zit6_interfaces
+# 运行前需 source install/setup.bash

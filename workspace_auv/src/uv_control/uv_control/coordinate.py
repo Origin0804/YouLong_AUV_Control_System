@@ -88,7 +88,16 @@ class Coordinate:
 
     @classmethod
     def from_zit6_array(cls, data: list):
-        """从 ZIT6 协议的 Float32MultiArray [x, y, z, yaw_rad] 创建 Coordinate。"""
+        """从 ZIT6 协议 Float32MultiArray 创建 Coordinate。
+
+        新格式：[x, y, z, roll_rad, pitch_rad, yaw_rad] (6 元素)
+        旧格式：[x, y, z, yaw_rad]                      (4 元素，兼容)
+        """
+        if len(data) >= 6:
+            return cls(x=data[0], y=data[1], z=data[2],
+                       rx=math.degrees(data[3]),
+                       ry=math.degrees(data[4]),
+                       rz=math.degrees(data[5]))
         if len(data) >= 4:
             return cls(x=data[0], y=data[1], z=data[2],
                        rz=math.degrees(data[3]))

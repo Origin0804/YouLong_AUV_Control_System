@@ -1,0 +1,7 @@
+# Execute a single task command (debug mode)
+string task_name       # task name from task_map, e.g. "wtravelxy", "setx", "start"
+string params_json     # JSON params dict, e.g. '{"dx": 5.0, "dy": 0.0}'
+float32 timeout        # action-goal timeout override in seconds (<=0 uses default)
+---
+bool success
+string message

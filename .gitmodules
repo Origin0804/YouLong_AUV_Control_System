@@ -1,0 +1,3 @@
+[submodule "third_party/AUV_zit6_cmake"]
+	path = third_party/AUV_zit6_cmake
+	url = https://github.com/exp-049/AUV_zit6_cmake.git

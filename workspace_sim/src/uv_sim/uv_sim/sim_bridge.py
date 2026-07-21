@@ -75,7 +75,7 @@ class SimBridgeNode(Node):
         self._tick = 0  # for rate-gated publishing
 
         self.pos = {'x': 0.0, 'y': 0.0, 'z': 0.0, 'rz': 0.0}     # NED deg
-        self.vel = {'x': 0.0, 'y': 0.0, 'z': 0.0, 'rz': 0.0}     # body, deg/s
+        self.vel = {'x': 0.0, 'y': 0.0, 'z': 0.0, 'rx': 0.0, 'ry': 0.0, 'rz': 0.0}  # body, deg/s
         self.vel_world = {'x': 0.0, 'y': 0.0, 'z': 0.0, 'rz': 0.0}
         self.thrust = [0.0] * 6
         self.target_pos = {'x': 0.0, 'y': 0.0, 'z': 0.0, 'rz': 0.0}
@@ -638,7 +638,9 @@ class SimBridgeNode(Node):
         self.pos['z'] = msg.pose.pose.position.z
 
         q = msg.pose.pose.orientation
-        _, _, yaw = self._quat_to_rpy(q.x, q.y, q.z, q.w)
+        roll, pitch, yaw = self._quat_to_rpy(q.x, q.y, q.z, q.w)
+        self.pos['rx'] = math.degrees(roll)
+        self.pos['ry'] = math.degrees(pitch)
         self.pos['rz'] = math.degrees(yaw)
 
         vx_w = msg.twist.twist.linear.x
@@ -646,18 +648,24 @@ class SimBridgeNode(Node):
         self.vel_world['x'] = vx_w
         self.vel_world['y'] = vy_w
         self.vel_world['z'] = msg.twist.twist.linear.z
+        self.vel_world['rx'] = math.degrees(msg.twist.twist.angular.x)
+        self.vel_world['ry'] = math.degrees(msg.twist.twist.angular.y)
         self.vel_world['rz'] = math.degrees(msg.twist.twist.angular.z)
 
-        # World → body velocity rotation
+        # World → body velocity rotation (yaw-only for XY linear, direct for angular)
         cy, sy = math.cos(yaw), math.sin(yaw)
         self.vel['x'] = vx_w * cy + vy_w * sy
         self.vel['y'] = -vx_w * sy + vy_w * cy
         self.vel['z'] = msg.twist.twist.linear.z
+        self.vel['rx'] = self.vel_world['rx']
+        self.vel['ry'] = self.vel_world['ry']
         self.vel['rz'] = self.vel_world['rz']
 
         self.current_pose_ready = True
 
     def _imu_cb(self, msg: Imu) -> None:
+        self.vel['rx'] = math.degrees(msg.angular_velocity.x)
+        self.vel['ry'] = math.degrees(msg.angular_velocity.y)
         self.vel['rz'] = math.degrees(msg.angular_velocity.z)
 
     def _dvl_cb(self, msg: DVL) -> None:
@@ -679,30 +687,43 @@ class SimBridgeNode(Node):
         status.control_level = self._current_mode
         status.ins_state = self._ins_state
         status.navigation_ready = self._ins_nav_ready
-        status.forces = [float(self.force_4dof[i]) for i in range(4)]
+        status.forces = [self.force_4dof[0], self.force_4dof[1], self.force_4dof[2],
+                          0.0, 0.0, self.force_4dof[3]]
         status.cycle_time_ms = 50.0
         status.battery_voltage = 16.8
         status.error_flags = 0
         self.zit6_status_pub.publish(status)
 
     def _publish_pos(self) -> None:
-        """Publish position (30Hz)."""
+        """Publish position (30Hz). 6-DOF: [x, y, z, roll_rad, pitch_rad, yaw_rad]."""
         pos_msg = Float32MultiArray()
-        pos_msg.data = [self.pos['x'], self.pos['y'], self.pos['z'],
-                        math.radians(self.pos['rz'])]
+        pos_msg.data = [
+            self.pos['x'], self.pos['y'], self.pos['z'],
+            math.radians(self.pos.get('rx', 0.0)),
+            math.radians(self.pos.get('ry', 0.0)),
+            math.radians(self.pos['rz']),
+        ]
         self.zit6_pos_pub.publish(pos_msg)
 
     def _publish_vel(self) -> None:
-        """Publish velocity (60Hz)."""
+        """Publish body velocity 6-DOF [vx, vy, vz, vroll_rad, vpitch_rad, vyaw_rad] (60Hz)."""
         vel_msg = Float32MultiArray()
-        vel_msg.data = [self.vel['x'], self.vel['y'], self.vel['z'],
-                        math.radians(self.vel['rz'])]
+        vel_msg.data = [
+            self.vel['x'], self.vel['y'], self.vel['z'],
+            math.radians(self.vel['rx']),
+            math.radians(self.vel['ry']),
+            math.radians(self.vel['rz']),
+        ]
         self.zit6_vel_pub.publish(vel_msg)
 
     def _publish_thr(self) -> None:
-        """Publish thrust (30Hz)."""
+        """Publish thrust 6-DOF [Fx, Fy, Fz, Mx(roll), My(pitch), Mz(yaw)] (30Hz)."""
         thr_msg = Float32MultiArray()
-        thr_msg.data = [float(self.force_4dof[i]) for i in range(4)]
+        # force_4dof = [Fx, Fy, Fz, Mz] → 6 元素, Mx/My 留空填 0
+        thr_msg.data = [
+            self.force_4dof[0], self.force_4dof[1], self.force_4dof[2],
+            0.0, 0.0, self.force_4dof[3],
+        ]
         self.zit6_thr_pub.publish(thr_msg)
 
     # ── Utilities ───────────────────────────────────────────────────

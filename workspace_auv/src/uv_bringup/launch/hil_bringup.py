@@ -45,6 +45,10 @@ def generate_launch_description():
         'serial_baud', default_value='921600',
         description='Baud rate for micro-ROS serial link'
     )
+    declare_publish_annotated = DeclareLaunchArgument(
+        'publish_annotated', default_value='false',
+        description='Publish YOLO annotated images with detection boxes'
+    )
 
     enable_ai = LaunchConfiguration('enable_ai')
     enable_nav = LaunchConfiguration('enable_nav')
@@ -52,6 +56,7 @@ def generate_launch_description():
     enable_motion = LaunchConfiguration('enable_motion')
     serial_dev = LaunchConfiguration('serial_dev')
     serial_baud = LaunchConfiguration('serial_baud')
+    publish_annotated = LaunchConfiguration('publish_annotated')
 
     # ── Stonefish simulator ────────────────────────────────────────
     from ament_index_python.packages import get_package_share_directory
@@ -118,6 +123,7 @@ def generate_launch_description():
         executable='vision',
         name='vision',
         output='screen',
+        parameters=[{'publish_annotated': publish_annotated}],
         condition=IfCondition(enable_ai),
     )
 
@@ -155,6 +161,7 @@ def generate_launch_description():
         declare_scenario,
         declare_serial_dev,
         declare_serial_baud,
+        declare_publish_annotated,
         LogInfo(msg=['HIL simulation data dir: ', simulation_data_dir]),
         LogInfo(msg=['micro-ROS serial device: ', serial_dev, ' @ ', serial_baud]),
         stonefish_sim,

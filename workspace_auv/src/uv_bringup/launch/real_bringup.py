@@ -23,10 +23,15 @@ def generate_launch_description():
         'enable_task', default_value='false',
         description='Enable task runner'
     )
+    declare_publish_annotated = DeclareLaunchArgument(
+        'publish_annotated', default_value='false',
+        description='Publish YOLO annotated images with detection boxes'
+    )
 
     enable_ai = LaunchConfiguration('enable_ai')
     enable_nav = LaunchConfiguration('enable_nav')
     enable_task = LaunchConfiguration('enable_task')
+    publish_annotated = LaunchConfiguration('publish_annotated')
 
     # Hardware manager (replaces sim_bridge on real hardware)
     hw_manager = Node(
@@ -48,7 +53,7 @@ def generate_launch_description():
         executable='vision',
         name='vision',
         output='screen',
-        parameters=[{'sim_mode': False}],
+        parameters=[{'sim_mode': False, 'publish_annotated': publish_annotated}],
         condition=IfCondition(enable_ai),
     )
 
@@ -80,6 +85,7 @@ def generate_launch_description():
         declare_enable_ai,
         declare_enable_nav,
         declare_enable_task,
+        declare_publish_annotated,
         hw_manager,
         basic_motion,
         vision,

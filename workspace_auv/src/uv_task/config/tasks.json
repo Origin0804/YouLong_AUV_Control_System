@@ -1,8 +1,8 @@
 {
   "tasks": [
     {"name": "start", "params": {}},
-    {"name": "wtravelxyz", "params": {"dx": 5.0, "dy": 0.0, "dz": 1.0}},
-    {"name": "setz", "params": {"z": 3.0}},
+    {"name": "setz", "params": {"z": 0.4}},
+    {"name": "wtravelxy", "params": {"x": 5.0, "y": 0.0}},
     {"name": "wait", "params": {"duration": 2.0}},
     {"name": "setrz", "params": {"rz": 50.0}},
     {"name": "bmovex", "params": {"dx": 2.0}},
